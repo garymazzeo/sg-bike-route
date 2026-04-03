@@ -1,0 +1,100 @@
+{
+  "homecodes": [
+    {
+      "homecode": "1810 Covington Dr<br>Ann Arbor, MI<br>48103",
+      "lat": "42.257940633362395",
+      "lon": "-83.77408600103068",
+      "display": 1,
+      "code_id": "19036",
+      "created": "1718974364",
+      "num_redemptions": "626",
+      "layerGroup": "E"
+    },
+    {
+      "homecode": "2213 Green Valley Ct<br>Ann Arbor, MI<br>48103",
+      "lat": "42.24390540539107",
+      "lon": "-83.77345561981203",
+      "display": 1,
+      "code_id": "19037",
+      "created": "1718974422",
+      "num_redemptions": "327",
+      "layerGroup": "E"
+    },
+    {
+      "homecode": "2420 Walter Dr<br>Ann Arbor, MI<br>48103",
+      "lat": "42.28852029999999",
+      "lon": "-83.78004039999999",
+      "display": 1,
+      "code_id": "19038",
+      "created": "1718974577",
+      "num_redemptions": "192",
+      "layerGroup": "E"
+    },
+    {
+      "homecode": "2248 Independence Blvd<br>Ann Arbor, MI<br>48104",
+      "lat": "42.2542761",
+      "lon": "-83.7124223",
+      "display": 1,
+      "code_id": "19040",
+      "created": "1718975150",
+      "num_redemptions": "189",
+      "layerGroup": "E"
+    },
+    {
+      "homecode": "3404 Porter St<br>Ann Arbor, MI<br>48103",
+      "lat": "42.2834549",
+      "lon": "-83.7971779",
+      "display": 1,
+      "code_id": "19041",
+      "created": "1718977097",
+      "num_redemptions": "84",
+      "layerGroup": "E"
+    },
+    {
+      "homecode": "1107 Brooklyn Ave<br>Ann Arbor, MI<br>48104",
+      "lat": "42.2637598",
+      "lon": "-83.7355271",
+      "display": 1,
+      "code_id": "19042",
+      "created": "1718978707",
+      "num_redemptions": "219",
+      "layerGroup": "E"
+    },
+    {
+      "homecode": "1614 Linwood Ave<br>Ann Arbor, MI<br>48103",
+      "lat": "42.2846649",
+      "lon": "-83.76856509999999",
+      "display": 1,
+      "reports": {
+        "33696": "33696"
+      },
+      "code_id": "19043",
+      "created": "1718978856",
+      "num_redemptions": "499",
+      "layerGroup": "E"
+    },
+    {
+      "homecode": "1924 Harley Dr<br>Ann Arbor, MI<br>48103",
+      "lat": "42.2574834",
+      "lon": "-83.7863512",
+      "display": 1,
+      "code_id": "19045",
+      "created": "1718979201",
+      "num_redemptions": "175",
+      "layerGroup": "E"
+    },
+    {
+      "homecode": "505 2nd St<br>Ann Arbor, MI<br>48103",
+      "lat": "42.27590171190431",
+      "lon": "-83.75208640458878",
+      "display": 1,
+      "reports": {
+        "36055": "36055"
+      },
+      "code_id": "19046",
+      "created": "1718979779",
+      "num_redemptions": "964",
+      "layerGroup": "E"
+    }
+  ]
+}

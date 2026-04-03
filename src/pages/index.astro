@@ -1,0 +1,15 @@
+---
+import Layout from "../layouts/Layout.astro"
+import MapboxMap from "../components/MapboxMap"
+---
+
+<Layout title="Summer Game bike route">
+  <main class="max-w-5xl mx-auto px-4 py-8">
+    <h1 class="text-2xl font-semibold text-slate-800 mb-2">Summer Game bike route</h1>
+    <p class="text-slate-600 text-sm mb-6">
+      Draw an inclusion area, then compute a cycling route through stops inside it.
+    </p>
+    <MapboxMap client:load />
+    <!-- client:load ensures client-side hydration -->
+  </main>
+</Layout>

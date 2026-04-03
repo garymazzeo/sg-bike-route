@@ -1,0 +1,52 @@
+# Build static site and sync ./dist to a VPS over SSH/rsync.
+# Required repository secrets:
+#   PUBLIC_MAPBOX_TOKEN — Mapbox public token (inlined at build time)
+#   DEPLOY_HOST         — hostname or IP of the VPS
+#   DEPLOY_USER         — SSH user (e.g. deploy or www-data)
+#   DEPLOY_PATH         — absolute path on server, trailing slash recommended (e.g. /var/www/bike-route/)
+#   SSH_PRIVATE_KEY     — full private key (PEM or OpenSSH format), including BEGIN/END lines
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        env:
+          PUBLIC_MAPBOX_TOKEN: ${{ secrets.PUBLIC_MAPBOX_TOKEN }}
+        run: npm run build
+
+      - name: Rsync to VPS
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          test -n "${SSH_PRIVATE_KEY:-}" || { echo "Missing SSH_PRIVATE_KEY secret"; exit 1; }
+          test -n "${DEPLOY_HOST:-}" || { echo "Missing DEPLOY_HOST secret"; exit 1; }
+          test -n "${DEPLOY_USER:-}" || { echo "Missing DEPLOY_USER secret"; exit 1; }
+          test -n "${DEPLOY_PATH:-}" || { echo "Missing DEPLOY_PATH secret"; exit 1; }
+          mkdir -p ~/.ssh
+          umask 077
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_deploy
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+          rsync -avz --delete \
+            -e "ssh -i ~/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
+            dist/ "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}"
