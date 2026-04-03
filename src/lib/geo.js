@@ -54,6 +54,57 @@ export function nearestNeighborOrder(points) {
   return orderIdx.map((i) => points[i]);
 }
 
+/** Greedy nearest-neighbor starting at a fixed seed (e.g. a library), visiting every point in pool once. */
+export function nearestNeighborFromSeed(seed, pool) {
+  if (!pool.length) return [seed];
+  const remaining = [...pool];
+  const order = [seed];
+  while (remaining.length) {
+    const last = order[order.length - 1];
+    let bestI = 0;
+    let bestD = Infinity;
+    for (let i = 0; i < remaining.length; i++) {
+      const d = haversineKm(last.lon, last.lat, remaining[i].lon, remaining[i].lat);
+      if (d < bestD) {
+        bestD = d;
+        bestI = i;
+      }
+    }
+    order.push(remaining.splice(bestI, 1)[0]);
+  }
+  return order;
+}
+
+/**
+ * Order lawn stops (nearest-neighbor), optionally inserting an AADL branch.
+ * @param {'none'|'start'|'end'|'mid'} libraryMode
+ * @param library null | { lat: number, lon: number, name: string }
+ */
+export function orderStopsWithLibrary(inside, library, libraryMode) {
+  if (!library || libraryMode === 'none') {
+    return nearestNeighborOrder(inside);
+  }
+  const libStop = {
+    lat: library.lat,
+    lon: library.lon,
+    label: library.name,
+  };
+  if (libraryMode === 'end') {
+    return [...nearestNeighborOrder(inside), libStop];
+  }
+  if (libraryMode === 'start') {
+    return nearestNeighborFromSeed(libStop, inside);
+  }
+  if (libraryMode === 'mid') {
+    const mid = nearestNeighborOrder(inside);
+    const idx = Math.max(0, Math.floor(mid.length / 2));
+    const out = [...mid];
+    out.splice(idx, 0, libStop);
+    return out;
+  }
+  return nearestNeighborOrder(inside);
+}
+
 /** Split [A,B,C,...,Z] into segments of at most maxPoints coords; segments overlap at one endpoint. */
 export function chunkWaypointSegments(coords, maxPoints = 25) {
   if (coords.length < 2) return [];

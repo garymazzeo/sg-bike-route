@@ -1,6 +1,9 @@
 # Summer Game bike route
 
-Astro + Preact + Mapbox: load lawn-code locations, draw an inclusion polygon, then build a **cycling** route through stops in that area (nearest-neighbor order, Mapbox Directions in chunks of up to 25 waypoints).
+Astro + Preact + Mapbox: load lawn-code locations, draw an inclusion polygon, then build a **cycling** route through stops in that area (nearest-neighbor order, Mapbox Directions in chunks of up to 25 waypoints). The UI shows **distance in miles**, **time** as minutes or hours+minutes, and **approximate elevation** from Mapbox terrain DEM along the line.
+
+- **GPX export:** After a route is computed, use **Export GPX** to download a `.gpx` file (track + visit-order waypoints) for apps like Komoot, Ride with GPS, or Garmin.
+- **AADL branches:** Five [Ann Arbor District Library](https://aadl.org/aboutus/locations) locations are shown as purple dots. You can optionally include one branch as **start**, **roughly halfway**, or **end** of the ride (straight-line ordering for lawn stops, then cycling directions through the full sequence). Branch coordinates are in [`src/data/aadl-libraries.json`](src/data/aadl-libraries.json) (sourced from OpenStreetMap-style lookups; adjust if a building moves).
 
 ## Local development
 

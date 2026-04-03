@@ -1,13 +1,17 @@
 import { useEffect, useRef, useState, useCallback } from 'preact/hooks';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { RotateCw, Route, Trash2, MapPin, Pentagon } from 'lucide-preact';
+import { RotateCw, Route, Trash2, MapPin, Pentagon, Download } from 'lucide-preact';
 import {
   pointInPolygon,
-  nearestNeighborOrder,
+  orderStopsWithLibrary,
   chunkWaypointSegments,
   mergeLineStringGeometries,
 } from '../lib/geo.js';
+import { buildGpx, downloadTextFile, stripHtml } from '../lib/gpx.js';
+import { formatMilesFromMeters, formatDurationHm } from '../lib/formatImperial.js';
+import { summarizeRouteElevationFeet } from '../lib/routeElevation.js';
+import aadlData from '../data/aadl-libraries.json';
 
 const DEFAULT_CENTER = [-83.77, 42.26];
 const DEFAULT_ZOOM = 11;
@@ -100,6 +104,19 @@ function countStopsInRing(stops, ring) {
   return n;
 }
 
+const LIBRARY_FC = {
+  type: 'FeatureCollection',
+  features: aadlData.libraries.map((lib) => ({
+    type: 'Feature',
+    geometry: { type: 'Point', coordinates: [lib.lon, lib.lat] },
+    properties: {
+      id: lib.id,
+      name: lib.name,
+      address: lib.address,
+    },
+  })),
+};
+
 export default function MapboxMap() {
   const mapContainer = useRef(null);
   const mapRef = useRef(null);
@@ -107,6 +124,7 @@ export default function MapboxMap() {
   const ringRef = useRef([]);
   const stopsRef = useRef([]);
   const polygonClosedRef = useRef(false);
+  const routeGenRef = useRef(0);
 
   const [loadingData, setLoadingData] = useState(true);
   const [routeLoading, setRouteLoading] = useState(false);
@@ -114,6 +132,9 @@ export default function MapboxMap() {
   const [polygonClosed, setPolygonClosed] = useState(false);
   const [stopsInArea, setStopsInArea] = useState(null);
   const [routeSummary, setRouteSummary] = useState(null);
+  const [libraryId, setLibraryId] = useState('');
+  const [libraryRole, setLibraryRole] = useState('none');
+  const [routeGpx, setRouteGpx] = useState(null);
 
   const updateStopsInAreaCount = useCallback(() => {
     if (!polygonClosedRef.current || ringRef.current.length < 3) {
@@ -173,6 +194,16 @@ export default function MapboxMap() {
     map.addControl(new mapboxgl.NavigationControl(), 'top-right');
 
     map.on('load', () => {
+      if (!map.getSource('mapbox-dem')) {
+        map.addSource('mapbox-dem', {
+          type: 'raster-dem',
+          url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
+          tileSize: 512,
+          maxzoom: 14,
+        });
+        map.setTerrain({ source: 'mapbox-dem', exaggeration: 1 });
+      }
+
       map.addSource('points', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
@@ -185,6 +216,22 @@ export default function MapboxMap() {
           'circle-radius': 5,
           'circle-color': '#e53935',
           'circle-stroke-width': 1,
+          'circle-stroke-color': '#ffffff',
+        },
+      });
+
+      map.addSource('libraries', {
+        type: 'geojson',
+        data: LIBRARY_FC,
+      });
+      map.addLayer({
+        id: 'libraries-layer',
+        type: 'circle',
+        source: 'libraries',
+        paint: {
+          'circle-radius': 9,
+          'circle-color': '#6a1b9a',
+          'circle-stroke-width': 2,
           'circle-stroke-color': '#ffffff',
         },
       });
@@ -254,6 +301,20 @@ export default function MapboxMap() {
           .addTo(map);
       });
 
+      map.on('click', 'libraries-layer', (e) => {
+        if (drawingRef.current) return;
+        const f = e.features?.[0];
+        if (!f) return;
+        const name = f.properties?.name || '';
+        const addr = f.properties?.address || '';
+        new mapboxgl.Popup({ closeButton: true })
+          .setLngLat(e.lngLat)
+          .setHTML(
+            `<div class="map-popup"><strong>${name}</strong><br/><span style="font-size:12px">${addr}</span></div>`
+          )
+          .addTo(map);
+      });
+
       map.on('click', (e) => {
         if (!drawingRef.current) return;
         ringRef.current.push([e.lngLat.lng, e.lngLat.lat]);
@@ -267,6 +328,13 @@ export default function MapboxMap() {
         else map.getCanvas().style.cursor = 'pointer';
       });
       map.on('mouseleave', 'points-layer', () => {
+        map.getCanvas().style.cursor = drawingRef.current ? 'crosshair' : '';
+      });
+      map.on('mouseenter', 'libraries-layer', () => {
+        if (drawingRef.current) map.getCanvas().style.cursor = 'crosshair';
+        else map.getCanvas().style.cursor = 'pointer';
+      });
+      map.on('mouseleave', 'libraries-layer', () => {
         map.getCanvas().style.cursor = drawingRef.current ? 'crosshair' : '';
       });
 
@@ -286,6 +354,7 @@ export default function MapboxMap() {
     setPolygonClosed(false);
     setStopsInArea(null);
     setRouteSummary(null);
+    setRouteGpx(null);
     const map = mapRef.current;
     if (map) {
       setInclusionSourceData(map, [], false);
@@ -318,6 +387,7 @@ export default function MapboxMap() {
     setPolygonClosed(false);
     setStopsInArea(null);
     setRouteSummary(null);
+    setRouteGpx(null);
     const map = mapRef.current;
     if (map) {
       setInclusionSourceData(map, [], false);
@@ -344,8 +414,23 @@ export default function MapboxMap() {
 
     const all = stopsRef.current;
     const inside = all.filter((s) => pointInPolygon(s.lon, s.lat, closedRing));
-    if (inside.length < 2) {
-      setError('Need at least two stops inside the area.');
+
+    const hasLibrary = Boolean(libraryId && libraryRole !== 'none');
+    const selectedLib = hasLibrary
+      ? aadlData.libraries.find((l) => l.id === libraryId)
+      : null;
+    if (hasLibrary && !selectedLib) {
+      setError('Choose a library branch.');
+      return;
+    }
+
+    const minInside = hasLibrary ? 1 : 2;
+    if (inside.length < minInside) {
+      setError(
+        hasLibrary
+          ? 'Need at least one lawn stop in the area when a library is included.'
+          : 'Need at least two stops inside the area.'
+      );
       return;
     }
     if (inside.length > MAX_STOPS_FOR_ROUTE) {
@@ -358,9 +443,11 @@ export default function MapboxMap() {
     setRouteLoading(true);
     setError(null);
     setRouteSummary(null);
+    setRouteGpx(null);
 
     try {
-      const ordered = nearestNeighborOrder(inside);
+      const mode = hasLibrary ? libraryRole : 'none';
+      const ordered = orderStopsWithLibrary(inside, selectedLib || null, mode);
       const coords = ordered.map((s) => [s.lon, s.lat]);
       const segments = chunkWaypointSegments(coords, MAX_WAYPOINTS_PER_REQUEST);
       const geometries = [];
@@ -384,6 +471,7 @@ export default function MapboxMap() {
 
       const merged = mergeLineStringGeometries(geometries);
       const map = mapRef.current;
+      const routeGen = ++routeGenRef.current;
       if (map?.getSource('route')) {
         map.getSource('route').setData({
           type: 'Feature',
@@ -398,9 +486,38 @@ export default function MapboxMap() {
         }
       }
 
-      const km = (totalM / 1000).toFixed(2);
-      const min = Math.round(totalS / 60);
-      setRouteSummary({ km, min, stops: inside.length });
+      setRouteSummary({
+        distanceLabel: formatMilesFromMeters(totalM),
+        durationLabel: formatDurationHm(totalS),
+        stops: inside.length,
+        libraryNote: hasLibrary ? selectedLib?.name : null,
+        visitOrder: ordered.length,
+        elevation: null,
+        _gen: routeGen,
+      });
+      setRouteGpx({
+        coordinates: merged.coordinates,
+        waypoints: ordered.map((s) => ({
+          lat: s.lat,
+          lon: s.lon,
+          name: stripHtml(s.label),
+        })),
+      });
+
+      if (map && merged?.coordinates?.length) {
+        const tryElevation = () => {
+          if (routeGenRef.current !== routeGen || !mapRef.current) return;
+          setRouteSummary((prev) => {
+            if (!prev || prev._gen !== routeGen) return prev;
+            if (prev.elevation) return prev;
+            const elev = summarizeRouteElevationFeet(map, merged.coordinates);
+            if (!elev) return prev;
+            return { ...prev, elevation: elev };
+          });
+        };
+        map.once('idle', tryElevation);
+        setTimeout(tryElevation, 2500);
+      }
     } catch (err) {
       console.error(err);
       setError(err.message || 'Failed to compute route.');
@@ -410,6 +527,21 @@ export default function MapboxMap() {
   };
 
   const busy = loadingData || routeLoading;
+
+  const hasLibraryLeg = Boolean(libraryId && libraryRole !== 'none');
+  const minStopsForButton = hasLibraryLeg ? 1 : 2;
+
+  const exportGpx = () => {
+    if (!routeGpx?.coordinates?.length) return;
+    const gpx = buildGpx({
+      name: 'Summer Game bike route',
+      trackName: 'Cycling route',
+      coordinates: routeGpx.coordinates,
+      waypoints: routeGpx.waypoints,
+    });
+    const filename = `bike-route-${new Date().toISOString().slice(0, 10)}.gpx`;
+    downloadTextFile(filename, gpx);
+  };
 
   return (
     <div class="space-y-4 max-w-5xl mx-auto p-4">
@@ -431,9 +563,24 @@ export default function MapboxMap() {
         )}
         {routeSummary && (
           <span class="text-slate-800">
-            · Route ~<strong>{routeSummary.km}</strong> km, ~
-            <strong>{routeSummary.min}</strong> min (
-            {routeSummary.stops} stops, nearest-neighbor order)
+            · Route <strong>{routeSummary.distanceLabel}</strong>,{' '}
+            <strong>{routeSummary.durationLabel}</strong> (
+            {routeSummary.stops} lawn stops
+            {routeSummary.libraryNote ? (
+              <span>
+                , <strong>{routeSummary.libraryNote}</strong> as library leg
+              </span>
+            ) : null}
+            , {routeSummary.visitOrder} visit points)
+            {routeSummary.elevation ? (
+              <span class="text-slate-700">
+                {' '}
+                · Elev. ~{routeSummary.elevation.minFt.toLocaleString()}–
+                {routeSummary.elevation.maxFt.toLocaleString()} ft, climb ~
+                {routeSummary.elevation.climbFt.toLocaleString()} ft
+                <span class="text-slate-500 font-normal"> (terrain est.)</span>
+              </span>
+            ) : null}
           </span>
         )}
       </div>
@@ -492,19 +639,81 @@ export default function MapboxMap() {
           type="button"
           onClick={calculateRoute}
           disabled={
-            busy || !polygonClosed || !stopsInArea || stopsInArea < 2
+            busy ||
+            !polygonClosed ||
+            stopsInArea == null ||
+            stopsInArea < minStopsForButton
           }
           class="inline-flex items-center gap-2 px-3 py-2 bg-emerald-600 text-white rounded-md text-sm hover:bg-emerald-700 disabled:opacity-50"
         >
           <Route class="w-4 h-4" />
           Bike route for stops in area
         </button>
+
+        <button
+          type="button"
+          onClick={exportGpx}
+          disabled={!routeGpx?.coordinates?.length}
+          class="inline-flex items-center gap-2 px-3 py-2 border border-emerald-700 text-emerald-800 rounded-md text-sm hover:bg-emerald-50 disabled:opacity-50"
+        >
+          <Download class="w-4 h-4" />
+          Export GPX
+        </button>
+      </div>
+
+      <div class="flex flex-wrap gap-3 items-end text-sm">
+        <label class="flex flex-col gap-1">
+          <span class="text-slate-600">AADL branch (optional)</span>
+          <select
+            class="border border-slate-300 rounded-md px-2 py-1.5 bg-white min-w-[12rem]"
+            value={libraryId}
+            onChange={(e) => {
+              const v = e.currentTarget.value;
+              setLibraryId(v);
+              if (!v) setLibraryRole('none');
+              else if (libraryRole === 'none') setLibraryRole('end');
+            }}
+          >
+            <option value="">None</option>
+            {aadlData.libraries.map((lib) => (
+              <option key={lib.id} value={lib.id}>
+                {lib.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label class="flex flex-col gap-1">
+          <span class="text-slate-600">Library in route</span>
+          <select
+            class="border border-slate-300 rounded-md px-2 py-1.5 bg-white min-w-[11rem] disabled:opacity-50"
+            value={libraryRole}
+            disabled={!libraryId}
+            onChange={(e) => setLibraryRole(e.currentTarget.value)}
+          >
+            <option value="none">Not used</option>
+            <option value="start">Start ride here</option>
+            <option value="mid">Roughly halfway</option>
+            <option value="end">End ride here</option>
+          </select>
+        </label>
       </div>
 
       <p class="text-xs text-slate-500 leading-relaxed">
-        Click the map to add corners while drawing. Choose &ldquo;Close area&rdquo; when done.
-        The route uses a nearest-neighbor order (straight-line distance), then Mapbox cycling
-        directions in segments of up to {MAX_WAYPOINTS_PER_REQUEST} waypoints.
+        Purple dots are Ann Arbor District Library branches (from{' '}
+        <a
+          class="text-blue-700 underline"
+          href="https://aadl.org/aboutus/locations"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          aadl.org
+        </a>
+        ). Click the map to add corners while drawing. Choose &ldquo;Close area&rdquo; when done.
+        Distance and time use U.S. units (miles; under an hour shows minutes only, otherwise hours
+        and minutes). Elevation range and climb come from Mapbox terrain (DEM) sampled along the
+        route—useful as an estimate, not survey-grade. The route uses nearest-neighbor order on lawn
+        stops, then Mapbox cycling directions in segments of up to {MAX_WAYPOINTS_PER_REQUEST}{' '}
+        waypoints. GPX includes the track and waypoints in visit order.
       </p>
     </div>
   );

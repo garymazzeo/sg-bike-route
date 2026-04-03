@@ -1,0 +1,39 @@
+{
+  "libraries": [
+    {
+      "id": "downtown",
+      "name": "AADL Downtown",
+      "address": "343 South Fifth Ave., Ann Arbor, MI 48104",
+      "lat": 42.2781734,
+      "lon": -83.7457081
+    },
+    {
+      "id": "pittsfield",
+      "name": "AADL Pittsfield",
+      "address": "2359 Oak Valley Dr., Ann Arbor, MI 48103",
+      "lat": 42.2525951,
+      "lon": -83.7779958
+    },
+    {
+      "id": "malletts",
+      "name": "AADL Malletts Creek",
+      "address": "3090 East Eisenhower Parkway, Ann Arbor, MI 48108",
+      "lat": 42.2436529,
+      "lon": -83.7180092
+    },
+    {
+      "id": "westgate",
+      "name": "AADL Westgate",
+      "address": "2503 Jackson Ave, Ann Arbor, MI 48103",
+      "lat": 42.2786508,
+      "lon": -83.7827286
+    },
+    {
+      "id": "traverwood",
+      "name": "AADL Traverwood",
+      "address": "3333 Traverwood Drive, Ann Arbor, MI 48105",
+      "lat": 42.3081798,
+      "lon": -83.7141049
+    }
+  ]
+}
