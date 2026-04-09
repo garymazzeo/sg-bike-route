@@ -14,13 +14,13 @@
   },
   "dependencies": {
     "@astrojs/preact": "^5.1.1",
-    "@astrojs/tailwind": "^6.0.2",
+    "@tailwindcss/vite": "^4.2.2",
     "astro": "^6.1.5",
     "lucide-preact": "^0.456.0",
     "mapbox-gl": "^3.8.0",
     "preact": "^10.24.3",
     "react": "npm:@preact/compat",
     "react-dom": "npm:@preact/compat",
-    "tailwindcss": "^3.4.19"
+    "tailwindcss": "^4.2.2"
   }
 }

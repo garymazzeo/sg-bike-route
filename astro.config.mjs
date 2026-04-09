@@ -1,8 +1,12 @@
 import { defineConfig } from 'astro/config';
 import preact from '@astrojs/preact';
 
-import tailwind from '@astrojs/tailwind';
+import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
-  integrations: [preact({ compat: true }), tailwind()],
+  integrations: [preact({ compat: true })],
+
+  vite: {
+    plugins: [tailwindcss()],
+  },
 });
