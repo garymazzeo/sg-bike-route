@@ -19,7 +19,7 @@ const MAX_WAYPOINTS_PER_REQUEST = 25;
 const MAX_STOPS_FOR_ROUTE = 500;
 
 const DATA_URL =
-  import.meta.env.PUBLIC_DATA_URL || '/data/SummerGame2025.json';
+  import.meta.env.PUBLIC_DATA_URL || '/sg-bike-route/data/SummerGame2025.json';
 
 function toNum(x) {
   const n = typeof x === 'number' ? x : parseFloat(x);
