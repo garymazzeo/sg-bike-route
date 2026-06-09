@@ -11,5 +11,14 @@ export default defineConfig({
 
   vite: {
     plugins: [tailwindcss()],
+    server: {
+      proxy: {
+        '/sg-bike-route/api/locations.php': {
+          target: 'https://aadl.org',
+          changeOrigin: true,
+          rewrite: () => '/summergame/map/data/SummerGame2026',
+        },
+      },
+    },
   },
 });

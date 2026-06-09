@@ -31,11 +31,21 @@ Astro + Preact + Mapbox: load lawn-code locations, draw an inclusion polygon, th
    npm run preview
    ```
 
-   Static output is written to `dist/`. Before each `npm run build` or `npm run dev`, `prebuild` / `predev` copies [`src/data/SummerGame2025.json`](src/data/SummerGame2025.json) to `public/data/` (see [`scripts/copy-data.mjs`](scripts/copy-data.mjs)). The generated file is gitignored; CI uses the same scripts.
+   Static output is written to `dist/`. Before each `npm run build` or `npm run dev`, `prebuild` / `predev` fetches location JSON into `public/data/locations.json` (see [`scripts/copy-data.mjs`](scripts/copy-data.mjs)). The generated file is gitignored; CI uses the same scripts. At runtime the map loads live data from [`public/api/locations.php`](public/api/locations.php) (Apache on the VPS); the baked JSON is a fallback if AADL is unreachable.
 
 ## Deploy with GitHub Actions (rsync to VPS)
 
-On every push to `main`, [.github/workflows/deploy.yml](.github/workflows/deploy.yml) runs `npm ci`, `npm run build`, then **rsync** `dist/` to your server.
+On every push to `main`, daily at **14:00 UTC**, or when triggered manually, [.github/workflows/deploy.yml](.github/workflows/deploy.yml) runs `npm ci`, `npm run build`, then **rsync** `dist/` to your server.
+
+### Triggers
+
+| Trigger | When |
+|---------|------|
+| Push to `main` | Every code change |
+| Schedule | Daily at 14:00 UTC (~10am ET) — refreshes baked fallback data and redeploys |
+| Manual | GitHub → Actions → Deploy → **Run workflow** |
+
+To change the daily time, edit the `cron` expression in the workflow (GitHub Actions uses UTC only).
 
 ### Repository secrets
 
@@ -50,9 +60,12 @@ On every push to `main`, [.github/workflows/deploy.yml](.github/workflows/deploy
 ### Server
 
 - Ensure `DEPLOY_PATH` exists and the SSH user can write there.
-- Configure nginx/Caddy/etc. to serve that directory as the document root (or a subpath).
+- **Apache + PHP:** The site expects Apache to execute `.php` files in the deploy directory. Live location data is served by `api/locations.php` (proxies AADL server-side; falls back to `data/locations.json` if upstream is down). Use **Reload data** on the map to fetch the latest stops without redeploying.
+- Configure your web server to serve the deploy directory at the site path (e.g. `/sg-bike-route/`).
 - First connection: the workflow uses `ssh-keyscan` so the host key is learned at deploy time. For stricter host verification, add a known-hosts step or pin `SSH_KNOWN_HOSTS` in the workflow.
 
-### Optional: data URL
+### Location data
 
-Set `PUBLIC_DATA_URL` in `.env` (or in the workflow `Build` step `env`) to load JSON from the web instead of `/data/SummerGame2025.json`.
+Set `PUBLIC_DATA_URL` in `.env` (or in the workflow `Build` step `env`) to fetch JSON at build time into `public/data/locations.json` (fallback copy). The map loads live data from `api/locations.php` at runtime.
+
+Local dev does not run PHP; Vite proxies `/sg-bike-route/api/locations.php` to AADL (see [`astro.config.mjs`](astro.config.mjs)).

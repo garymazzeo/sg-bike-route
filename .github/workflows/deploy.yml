@@ -12,6 +12,8 @@ on:
   push:
     branches: [main]
   workflow_dispatch: # Allow manual trigger
+  schedule:
+    - cron: '0 14 * * *' # daily at 14:00 UTC (~10am ET)
 
 jobs:
   deploy:

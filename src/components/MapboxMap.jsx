@@ -18,8 +18,8 @@ const DEFAULT_ZOOM = 11;
 const MAX_WAYPOINTS_PER_REQUEST = 25;
 const MAX_STOPS_FOR_ROUTE = 500;
 
-const DATA_URL =
-  import.meta.env.PUBLIC_DATA_URL || '/sg-bike-route/data/SummerGame2025.json';
+const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
+const DATA_URL = `${base}api/locations.php`;
 
 function toNum(x) {
   const n = typeof x === 'number' ? x : parseFloat(x);
@@ -144,11 +144,12 @@ export default function MapboxMap() {
     setStopsInArea(countStopsInRing(stopsRef.current, ringRef.current));
   }, []);
 
-  const loadPointsData = useCallback(async () => {
+  const loadPointsData = useCallback(async (bustCache = false) => {
     setLoadingData(true);
     setError(null);
     try {
-      const response = await fetch(DATA_URL);
+      const url = bustCache ? `${DATA_URL}?t=${Date.now()}` : DATA_URL;
+      const response = await fetch(url);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const json = await response.json();
       const homecodes = json.homecodes || [];
@@ -600,7 +601,7 @@ export default function MapboxMap() {
       <div class="flex flex-wrap gap-2 items-center">
         <button
           type="button"
-          onClick={loadPointsData}
+          onClick={() => loadPointsData(true)}
           disabled={busy}
           class="inline-flex items-center gap-2 px-3 py-2 bg-slate-700 text-white rounded-md text-sm hover:bg-slate-800 disabled:opacity-50"
         >

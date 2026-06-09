@@ -18,6 +18,7 @@ pnpm-debug.log*
 .env.production
 
 # Generated from src/data (see scripts/copy-data.mjs)
+public/data/locations.json
 public/data/SummerGame2025.json
 
 # macOS-specific files
