@@ -30,6 +30,7 @@ jobs:
       - name: Build
         env:
           PUBLIC_MAPBOX_TOKEN: ${{ secrets.PUBLIC_MAPBOX_TOKEN }}
+          PUBLIC_MAPBOX_TOKEN: https://aadl.org/summergame/map/data/SummerGame2026
         run: npm run build
 
       - name: Rsync to VPS
