@@ -158,14 +158,6 @@ export default function MapboxMap() {
       const map = mapRef.current;
       if (map?.getSource('points')) {
         map.getSource('points').setData(stopsToFeatureCollection(stops));
-        const bounds = new mapboxgl.LngLatBounds();
-        for (const s of stops) bounds.extend([s.lon, s.lat]);
-        if (!stops.length) {
-          map.setCenter(DEFAULT_CENTER);
-          map.setZoom(DEFAULT_ZOOM);
-        } else {
-          map.fitBounds(bounds, { padding: 48, maxZoom: 14 });
-        }
       }
       updateStopsInAreaCount();
     } catch (err) {
