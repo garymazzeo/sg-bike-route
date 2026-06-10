@@ -20,22 +20,48 @@ const MAX_STOPS_FOR_ROUTE = 500;
 
 const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
 const DATA_URL = `${base}api/locations.php`;
+const AADL_ORIGIN = 'https://aadl.org';
+
+const PLACE_KINDS = ['homecodes', 'bizcodes', 'badges'];
+
+const PLACE_META = {
+  homecodes: { label: 'Homecodes', color: '#e53935' },
+  bizcodes: { label: 'Bizcodes', color: '#e65100' },
+  badges: { label: 'Badges', color: '#2e7d32' },
+};
+
+const DEFAULT_PLACE_OPTIONS = {
+  homecodes: { showMap: true, includeRoute: true },
+  bizcodes: { showMap: true, includeRoute: true },
+  badges: { showMap: true, includeRoute: true },
+};
 
 function toNum(x) {
   const n = typeof x === 'number' ? x : parseFloat(x);
   return Number.isFinite(n) ? n : NaN;
 }
 
-function homecodesToStops(homecodes) {
+function itemsToStops(items, kind) {
   const stops = [];
-  for (const item of homecodes) {
+  for (const item of items) {
     const lat = toNum(item.lat);
     const lon = toNum(item.lon);
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+    let label = '';
+    if (kind === 'homecodes') {
+      label = item.homecode || String(item.code_id || '');
+    } else if (kind === 'bizcodes') {
+      label = item.bizcode || String(item.code_id || '');
+    } else {
+      label = item.popup || 'Badge';
+    }
     stops.push({
       lat,
       lon,
-      label: item.homecode || String(item.code_id || ''),
+      label,
+      kind,
+      image: item.image || null,
+      code_id: item.code_id || null,
     });
   }
   return stops;
@@ -48,9 +74,69 @@ function stopsToFeatureCollection(stops) {
       type: 'Feature',
       id: i,
       geometry: { type: 'Point', coordinates: [s.lon, s.lat] },
-      properties: { label: s.label, i },
+      properties: { label: s.label, kind: s.kind, i },
     })),
   };
+}
+
+function badgeImageUrl(imagePath) {
+  if (!imagePath) return null;
+  if (imagePath.startsWith('http')) return imagePath;
+  return `${AADL_ORIGIN}${imagePath.startsWith('/') ? '' : '/'}${imagePath}`;
+}
+
+function clearBadgeMarkers(markers) {
+  for (const marker of markers) marker.remove();
+  markers.length = 0;
+}
+
+function syncBadgeMarkers(map, badges, showMap, markers, drawingRef) {
+  clearBadgeMarkers(markers);
+  if (!map || !showMap) return;
+
+  for (const badge of badges) {
+    const url = badgeImageUrl(badge.image);
+    const el = document.createElement('div');
+    el.className = 'badge-marker';
+    if (url) {
+      const img = document.createElement('img');
+      img.src = url;
+      img.alt = stripHtml(badge.label);
+      img.width = 40;
+      img.height = 40;
+      el.appendChild(img);
+    } else {
+      el.style.width = '14px';
+      el.style.height = '14px';
+      el.style.borderRadius = '50%';
+      el.style.backgroundColor = PLACE_META.badges.color;
+      el.style.border = '2px solid #fff';
+      el.style.boxShadow = '0 1px 3px rgba(0,0,0,0.35)';
+    }
+
+    const marker = new mapboxgl.Marker({ element: el, anchor: 'center' })
+      .setLngLat([badge.lon, badge.lat])
+      .addTo(map);
+
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (drawingRef.current) return;
+      new mapboxgl.Popup({ closeButton: true, maxWidth: '280px' })
+        .setLngLat([badge.lon, badge.lat])
+        .setHTML(`<div class="map-popup">${badge.label}</div>`)
+        .addTo(map);
+    });
+    el.style.cursor = 'pointer';
+    markers.push(marker);
+  }
+}
+
+function formatLoadedAt(date) {
+  if (!date) return '';
+  return date.toLocaleString(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
 }
 
 function ensureClosedRing(ring) {
@@ -123,8 +209,11 @@ export default function MapboxMap() {
   const drawingRef = useRef(false);
   const ringRef = useRef([]);
   const stopsRef = useRef([]);
+  const placesRef = useRef({ homecodes: [], bizcodes: [], badges: [] });
+  const placeOptionsRef = useRef({ ...DEFAULT_PLACE_OPTIONS });
   const polygonClosedRef = useRef(false);
   const routeGenRef = useRef(0);
+  const badgeMarkersRef = useRef([]);
 
   const [loadingData, setLoadingData] = useState(true);
   const [routeLoading, setRouteLoading] = useState(false);
@@ -135,6 +224,23 @@ export default function MapboxMap() {
   const [libraryId, setLibraryId] = useState('');
   const [libraryRole, setLibraryRole] = useState('none');
   const [routeGpx, setRouteGpx] = useState(null);
+  const [placeCounts, setPlaceCounts] = useState({
+    homecodes: 0,
+    bizcodes: 0,
+    badges: 0,
+  });
+  const [dataLoadedAt, setDataLoadedAt] = useState(null);
+  const [placeOptions, setPlaceOptions] = useState({ ...DEFAULT_PLACE_OPTIONS });
+
+  const rebuildRouteStops = useCallback(() => {
+    const places = placesRef.current;
+    const opts = placeOptionsRef.current;
+    const stops = [];
+    for (const kind of PLACE_KINDS) {
+      if (opts[kind].includeRoute) stops.push(...places[kind]);
+    }
+    stopsRef.current = stops;
+  }, []);
 
   const updateStopsInAreaCount = useCallback(() => {
     if (!polygonClosedRef.current || ringRef.current.length < 3) {
@@ -144,6 +250,37 @@ export default function MapboxMap() {
     setStopsInArea(countStopsInRing(stopsRef.current, ringRef.current));
   }, []);
 
+  const applyMapLayerVisibility = useCallback((map) => {
+    if (!map) return;
+    const opts = placeOptionsRef.current;
+    for (const kind of ['homecodes', 'bizcodes']) {
+      const visible = opts[kind].showMap ? 'visible' : 'none';
+      const layerId = `${kind}-layer`;
+      if (map.getLayer(layerId)) {
+        map.setLayoutProperty(layerId, 'visibility', visible);
+      }
+    }
+    syncBadgeMarkers(
+      map,
+      placesRef.current.badges,
+      opts.badges.showMap,
+      badgeMarkersRef.current,
+      drawingRef
+    );
+  }, []);
+
+  const refreshMapPlaces = useCallback((map) => {
+    if (!map) return;
+    const places = placesRef.current;
+    if (map.getSource('homecodes')) {
+      map.getSource('homecodes').setData(stopsToFeatureCollection(places.homecodes));
+    }
+    if (map.getSource('bizcodes')) {
+      map.getSource('bizcodes').setData(stopsToFeatureCollection(places.bizcodes));
+    }
+    applyMapLayerVisibility(map);
+  }, [applyMapLayerVisibility]);
+
   const loadPointsData = useCallback(async (bustCache = false) => {
     setLoadingData(true);
     setError(null);
@@ -152,13 +289,21 @@ export default function MapboxMap() {
       const response = await fetch(url);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const json = await response.json();
-      const homecodes = json.homecodes || [];
-      const stops = homecodesToStops(homecodes);
-      stopsRef.current = stops;
+      const places = {
+        homecodes: itemsToStops(json.homecodes || [], 'homecodes'),
+        bizcodes: itemsToStops(json.bizcodes || [], 'bizcodes'),
+        badges: itemsToStops(json.badges || [], 'badges'),
+      };
+      placesRef.current = places;
+      setPlaceCounts({
+        homecodes: places.homecodes.length,
+        bizcodes: places.bizcodes.length,
+        badges: places.badges.length,
+      });
+      setDataLoadedAt(new Date());
+      rebuildRouteStops();
       const map = mapRef.current;
-      if (map?.getSource('points')) {
-        map.getSource('points').setData(stopsToFeatureCollection(stops));
-      }
+      if (map) refreshMapPlaces(map);
       updateStopsInAreaCount();
     } catch (err) {
       console.error(err);
@@ -166,7 +311,26 @@ export default function MapboxMap() {
     } finally {
       setLoadingData(false);
     }
-  }, [updateStopsInAreaCount]);
+  }, [rebuildRouteStops, refreshMapPlaces, updateStopsInAreaCount]);
+
+  const setPlaceOption = useCallback(
+    (kind, key, value) => {
+      setPlaceOptions((prev) => {
+        const next = { ...prev, [kind]: { ...prev[kind], [key]: value } };
+        placeOptionsRef.current = next;
+        return next;
+      });
+    },
+    []
+  );
+
+  useEffect(() => {
+    placeOptionsRef.current = placeOptions;
+    rebuildRouteStops();
+    const map = mapRef.current;
+    if (map) applyMapLayerVisibility(map);
+    updateStopsInAreaCount();
+  }, [placeOptions, rebuildRouteStops, applyMapLayerVisibility, updateStopsInAreaCount]);
 
   useEffect(() => {
     const token = import.meta.env.PUBLIC_MAPBOX_TOKEN;
@@ -197,18 +361,34 @@ export default function MapboxMap() {
         map.setTerrain({ source: 'mapbox-dem', exaggeration: 1 });
       }
 
-      map.addSource('points', {
+      map.addSource('homecodes', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
       });
       map.addLayer({
-        id: 'points-layer',
+        id: 'homecodes-layer',
         type: 'circle',
-        source: 'points',
+        source: 'homecodes',
         paint: {
           'circle-radius': 5,
-          'circle-color': '#e53935',
+          'circle-color': PLACE_META.homecodes.color,
           'circle-stroke-width': 1,
+          'circle-stroke-color': '#ffffff',
+        },
+      });
+
+      map.addSource('bizcodes', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+      map.addLayer({
+        id: 'bizcodes-layer',
+        type: 'circle',
+        source: 'bizcodes',
+        paint: {
+          'circle-radius': 7,
+          'circle-color': PLACE_META.bizcodes.color,
+          'circle-stroke-width': 2,
           'circle-stroke-color': '#ffffff',
         },
       });
@@ -283,16 +463,19 @@ export default function MapboxMap() {
         },
       });
 
-      map.on('click', 'points-layer', (e) => {
+      const showPlacePopup = (e) => {
         if (drawingRef.current) return;
         const f = e.features?.[0];
         if (!f) return;
         const label = f.properties?.label || '';
-        new mapboxgl.Popup({ closeButton: true })
+        new mapboxgl.Popup({ closeButton: true, maxWidth: '280px' })
           .setLngLat(e.lngLat)
-          .setHTML(`<div class="map-popup"><strong>${label}</strong></div>`)
+          .setHTML(`<div class="map-popup">${label}</div>`)
           .addTo(map);
-      });
+      };
+
+      map.on('click', 'homecodes-layer', showPlacePopup);
+      map.on('click', 'bizcodes-layer', showPlacePopup);
 
       map.on('click', 'libraries-layer', (e) => {
         if (drawingRef.current) return;
@@ -316,13 +499,15 @@ export default function MapboxMap() {
         setInclusionSourceData(map, ringRef.current, false);
       });
 
-      map.on('mouseenter', 'points-layer', () => {
-        if (drawingRef.current) map.getCanvas().style.cursor = 'crosshair';
-        else map.getCanvas().style.cursor = 'pointer';
-      });
-      map.on('mouseleave', 'points-layer', () => {
-        map.getCanvas().style.cursor = drawingRef.current ? 'crosshair' : '';
-      });
+      for (const layerId of ['homecodes-layer', 'bizcodes-layer']) {
+        map.on('mouseenter', layerId, () => {
+          if (drawingRef.current) map.getCanvas().style.cursor = 'crosshair';
+          else map.getCanvas().style.cursor = 'pointer';
+        });
+        map.on('mouseleave', layerId, () => {
+          map.getCanvas().style.cursor = drawingRef.current ? 'crosshair' : '';
+        });
+      }
       map.on('mouseenter', 'libraries-layer', () => {
         if (drawingRef.current) map.getCanvas().style.cursor = 'crosshair';
         else map.getCanvas().style.cursor = 'pointer';
@@ -335,6 +520,7 @@ export default function MapboxMap() {
     });
 
     return () => {
+      clearBadgeMarkers(badgeMarkersRef.current);
       map.remove();
       mapRef.current = null;
     };
@@ -421,7 +607,7 @@ export default function MapboxMap() {
     if (inside.length < minInside) {
       setError(
         hasLibrary
-          ? 'Need at least one lawn stop in the area when a library is included.'
+          ? 'Need at least one stop in the area when a library is included.'
           : 'Need at least two stops inside the area.'
       );
       return;
@@ -549,16 +735,21 @@ export default function MapboxMap() {
         <span>
           Data: <code class="bg-slate-100 px-1 rounded">{DATA_URL}</code>
         </span>
+        {dataLoadedAt && (
+          <span>
+            · Last loaded <strong>{formatLoadedAt(dataLoadedAt)}</strong>
+          </span>
+        )}
         {stopsInArea != null && polygonClosed && (
           <span class="text-slate-800">
-            · <strong>{stopsInArea}</strong> stops in area
+            · <strong>{stopsInArea}</strong> route stops in area
           </span>
         )}
         {routeSummary && (
           <span class="text-slate-800">
             · Route <strong>{routeSummary.distanceLabel}</strong>,{' '}
             <strong>{routeSummary.durationLabel}</strong> (
-            {routeSummary.stops} lawn stops
+            {routeSummary.stops} stops
             {routeSummary.libraryNote ? (
               <span>
                 , <strong>{routeSummary.libraryNote}</strong> as library leg
@@ -654,6 +845,56 @@ export default function MapboxMap() {
         </button>
       </div>
 
+      <div class="grid gap-3 sm:grid-cols-3 text-sm">
+        {PLACE_KINDS.map((kind) => {
+          const meta = PLACE_META[kind];
+          const opts = placeOptions[kind];
+          return (
+            <div
+              key={kind}
+              class="border border-slate-200 rounded-md p-3 bg-white space-y-2"
+            >
+              <div class="flex items-center justify-between gap-2">
+                <span class="font-medium text-slate-800 flex items-center gap-2">
+                  {kind !== 'badges' ? (
+                    <span
+                      class="inline-block w-3 h-3 rounded-full shrink-0 border border-white shadow-sm"
+                      style={{ backgroundColor: meta.color }}
+                    />
+                  ) : (
+                    <span class="text-xs text-slate-500">img</span>
+                  )}
+                  {meta.label}
+                </span>
+                <span class="text-slate-600 tabular-nums">
+                  <strong>{placeCounts[kind].toLocaleString()}</strong>
+                </span>
+              </div>
+              <label class="flex items-center gap-2 text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={opts.showMap}
+                  onChange={(e) =>
+                    setPlaceOption(kind, 'showMap', e.currentTarget.checked)
+                  }
+                />
+                Show on map
+              </label>
+              <label class="flex items-center gap-2 text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={opts.includeRoute}
+                  onChange={(e) =>
+                    setPlaceOption(kind, 'includeRoute', e.currentTarget.checked)
+                  }
+                />
+                Include in bike route
+              </label>
+            </div>
+          );
+        })}
+      </div>
+
       <div class="flex flex-wrap gap-3 items-end text-sm">
         <label class="flex flex-col gap-1">
           <span class="text-slate-600">AADL branch (optional)</span>
@@ -692,7 +933,8 @@ export default function MapboxMap() {
       </div>
 
       <p class="text-xs text-slate-500 leading-relaxed">
-        Purple dots are Ann Arbor District Library branches (from{' '}
+        Red dots are homecodes, orange dots are bizcodes, and badge locations use their badge image
+        as the marker. Purple dots are Ann Arbor District Library branches (from{' '}
         <a
           class="text-blue-700 underline"
           href="https://aadl.org/aboutus/locations"
@@ -701,12 +943,13 @@ export default function MapboxMap() {
         >
           aadl.org
         </a>
-        ). Click the map to add corners while drawing. Choose &ldquo;Close area&rdquo; when done.
-        Distance and time use U.S. units (miles; under an hour shows minutes only, otherwise hours
-        and minutes). Elevation range and climb come from Mapbox terrain (DEM) sampled along the
-        route—useful as an estimate, not survey-grade. The route uses nearest-neighbor order on lawn
-        stops, then Mapbox cycling directions in segments of up to {MAX_WAYPOINTS_PER_REQUEST}{' '}
-        waypoints. GPX includes the track and waypoints in visit order.
+        ). Use the checkboxes above to show or hide each type on the map and to include or exclude
+        them from the bike route. Click the map to add corners while drawing. Choose &ldquo;Close
+        area&rdquo; when done. Distance and time use U.S. units (miles; under an hour shows minutes
+        only, otherwise hours and minutes). Elevation range and climb come from Mapbox terrain (DEM)
+        sampled along the route—useful as an estimate, not survey-grade. The route uses
+        nearest-neighbor order on selected stops, then Mapbox cycling directions in segments of up to{' '}
+        {MAX_WAYPOINTS_PER_REQUEST} waypoints. GPX includes the track and waypoints in visit order.
       </p>
     </div>
   );
